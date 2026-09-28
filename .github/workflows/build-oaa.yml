@@ -58,22 +58,3 @@ jobs:
             ${{ runner.temp }}/okra-artifacts/
             out/
           if-no-files-found: error
-
-  publish:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: oaa-*
-          path: collected
-          merge-multiple: true
-      - name: publish
-        env:
-          PublishToken: ${{ secrets.PUBLISH_TOKEN }}
-        run: |
-          mkdir -p out
-          [ -d collected/okra-artifacts ] && cp -a collected/okra-artifacts/. out/ || true
-          [ -d collected/out ] && cp -a collected/out/. out/ || true
-          bash scripts/publish.sh
