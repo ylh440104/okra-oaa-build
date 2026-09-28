@@ -1,0 +1,79 @@
+name: build-oaa
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      package:
+        description: package name, empty means all
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-oaa
+  cancel-in-progress: false
+
+jobs:
+  list:
+    runs-on: ubuntu-latest
+    outputs:
+      packages: ${{ steps.collect.outputs.packages }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: collect
+        run: |
+          if [ -n "${{ inputs.package }}" ]; then
+            echo "packages=[\"${{ inputs.package }}\"]" >> "$GITHUB_OUTPUT"
+          else
+            value=$(ls packages/*.conf | xargs -n1 basename | sed 's/\.conf$//' | sort \
+              | python3 -c 'import json,sys; print(json.dumps([line.strip() for line in sys.stdin if line.strip()]))')
+            echo "packages=$value" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: list
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        package: ${{ fromJSON(needs.list.outputs.packages) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential autoconf automake libtool pkg-config \
+            texinfo gettext bison gawk m4 patch curl xz-utils zstd wget file gperf flex gmp libgmp-dev libmpfr-dev libmpc-dev
+      - name: build ${{ matrix.package }}
+        run: bash scripts/build-package.sh "${{ matrix.package }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: oaa-${{ matrix.package }}
+          path: |
+            ${{ runner.temp }}/okra-artifacts/
+            out/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: oaa-*
+          path: collected
+          merge-multiple: true
+      - name: publish
+        env:
+          PublishToken: ${{ secrets.PUBLISH_TOKEN }}
+        run: |
+          mkdir -p out
+          [ -d collected/okra-artifacts ] && cp -a collected/okra-artifacts/. out/ || true
+          [ -d collected/out ] && cp -a collected/out/. out/ || true
+          bash scripts/publish.sh
